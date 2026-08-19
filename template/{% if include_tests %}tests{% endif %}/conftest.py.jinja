@@ -106,10 +106,24 @@ def exchange(bootstrap, requests, identifier=IDENTIFIER):
     assert process.returncode == 0, process.stderr.decode("utf-8", "replace")
 
     stream = io.BytesIO(process.stdout)
-    return [
+    responses = [
         _decode(read_frame(stream), atom_count, flags)
         for _, flags in requests
     ]
+
+    # One response frame per request and nothing else. Anything left over is
+    # something that wrote to stdout when it should have written to stderr --
+    # a debugging print, or a dependency announcing itself on import. Python
+    # block-buffers text stdout into a pipe, so such output often surfaces at
+    # exit rather than in the middle of the frames, which is why it can look
+    # harmless right up until a flush lands it between two frames.
+    trailing = stream.read()
+    assert not trailing, (
+        "unexpected bytes on stdout after the last response frame: "
+        + repr(trailing[:200])
+    )
+
+    return responses
 
 
 def _decode(frame, atom_count, request_flags):
