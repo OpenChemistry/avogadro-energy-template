@@ -44,6 +44,23 @@ def water():
     """The bootstrap JSON Avogadro would send for a water molecule."""
     with (DATA / "water.json").open(encoding="utf-8") as handle:
         return json.load(handle)
+{%- if support_unit_cell %}
+
+
+@pytest.fixture
+def copper():
+    """A periodic bootstrap JSON, image atoms and all."""
+    with (DATA / "copper.json").open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def image_mask(bootstrap):
+    """True for the atoms that are periodic images of another atom."""
+    fractional = np.array(
+        bootstrap["cjson"]["atoms"]["coords"]["3dFractional"], dtype=float
+    ).reshape(-1, 3)
+    return np.any(np.abs(fractional - 1.0) < 1e-4, axis=1)
+{%- endif %}
 
 
 def coordinates(bootstrap):

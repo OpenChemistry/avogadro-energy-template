@@ -163,3 +163,44 @@ def test_hessian_rows_are_gradient_derivatives(water):
     expected = (gradient_plus - gradient_minus).reshape(-1) / (2.0 * step)
     assert hessian[k] == pytest.approx(expected, rel=1e-3, abs=1e-3)
 {%- endif %}
+{%- if support_unit_cell %}
+
+
+def test_periodic_energy_is_finite(copper):
+    coords = coordinates(copper)
+    (energy,) = exchange(copper, [(coords, 0)])
+
+    assert np.isfinite(energy)
+
+
+def test_gradient_covers_every_atom_avogadro_sent(copper):
+    """Frames are sized by the full atom count, images included.
+
+    The calculator never sees the images, so their rows come back as zeros --
+    but the rows have to be there, or the frame is the wrong length and the
+    protocol desynchronizes.
+    """
+    coords = coordinates(copper)
+    (gradient,) = exchange(copper, [(coords, FLAG_REQUEST_GRADIENT)])
+
+    images = image_mask(copper)
+    assert gradient.shape == coords.shape
+    assert np.all(gradient[images] == 0.0)
+    assert np.all(np.isfinite(gradient))
+
+
+def test_energy_is_invariant_under_a_lattice_translation(copper):
+    """Shifting the cell contents by a lattice vector changes nothing.
+
+    This is the check that the unit cell is actually being applied: without
+    periodic boundary conditions the two energies differ.
+    """
+    coords = coordinates(copper)
+    lattice_a = np.array(
+        copper["cjson"]["unitCell"]["cellVectors"][0:3], dtype=float
+    )
+
+    here, there = exchange(copper, [(coords, 0), (coords + lattice_a, 0)])
+
+    assert here == pytest.approx(there)
+{%- endif %}
