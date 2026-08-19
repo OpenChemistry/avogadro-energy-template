@@ -1,0 +1,19 @@
+{
+  "device": {
+    "type": "stringList",
+    "label": "Device",
+    "values": ["cpu", "cuda", "mps"],
+    "default": 0,
+    "toolTip": "Hardware the model runs on"
+  },
+  "cutoff": {
+    "type": "float",
+    "label": "Cutoff",
+    "default": 5.0,
+    "minimum": 1.0,
+    "maximum": 20.0,
+    "precision": 2,
+    "suffix": " Å",
+    "toolTip": "Interaction cutoff radius"
+  }
+}

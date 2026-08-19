@@ -1,0 +1,266 @@
+# Copier template for Avogadro 2 energy models (Pixi project / binary protocol).
+#
+#   copier copy /path/to/avogadro-energy-template my-energy-plugin
+#
+# See https://two.avogadro.cc/develop/plugins/ for the plugin API.
+
+_subdirectory: template
+_min_copier_version: "9.2.0"
+
+# --- Plugin identity -------------------------------------------------------
+
+plugin_name:
+  type: str
+  help: |
+    Plugin name. Avogadro requires this to start with "avogadro-", and to
+    contain only ASCII letters, digits and hyphens (no underscores, no Unicode).
+  default: avogadro-example-energy
+  validator: >-
+    {% if not plugin_name.startswith('avogadro-') %}
+    Plugin names must start with "avogadro-".
+    {% elif not plugin_name.replace('-', '').isalnum() %}
+    Plugin names may only contain ASCII letters, digits and hyphens.
+    {% elif not plugin_name.replace('-', '').isascii() %}
+    Plugin names must be ASCII only.
+    {% elif plugin_name.endswith('-') %}
+    Plugin names must not end with a hyphen.
+    {% endif %}
+
+# The Python package name: hyphens are not legal in Python identifiers.
+module_name:
+  type: str
+  when: false
+  default: "{{ plugin_name | replace('-', '_') }}"
+
+# "avogadro-foo" -> "foo"; used for default labels and prose.
+short_name:
+  type: str
+  when: false
+  default: "{{ plugin_name[9:] }}"
+
+description:
+  type: str
+  help: One-line description of the plugin
+  default: "An energy model for Avogadro 2"
+
+author_name:
+  type: str
+  help: Your name
+  default: "Geoff Hutchison"
+
+author_email:
+  type: str
+  help: Your email address
+  default: "geoff.hutchison@gmail.com"
+
+github_user:
+  type: str
+  help: GitHub user or organization that will host the plugin
+  default: "ghutchis"
+
+license:
+  type: str
+  help: License (SPDX identifier)
+  default: BSD-3-Clause
+  choices:
+    - BSD-3-Clause
+    - MIT
+
+year:
+  type: str
+  when: false
+  default: "{{ '%Y' | strftime }}"
+
+# --- Packaging -------------------------------------------------------------
+
+build_backend:
+  type: str
+  help: Build backend for the Python package
+  default: uv_build
+  choices:
+    uv_build (as avogadro-rdkit, avogadro-xyzrender): uv_build
+    hatchling (as avogadro-mace, avogadro-aimnet2): hatchling
+
+python_requires:
+  type: str
+  help: |
+    Minimum Python version. The avogadro wheel publishes cp311 through cp314.
+  default: "3.11"
+
+platforms:
+  type: str
+  help: Pixi platforms to support
+  multiselect: true
+  default:
+    - osx-arm64
+    - linux-64
+    - win-64
+  choices:
+    - osx-arm64
+    - osx-64
+    - linux-64
+    - linux-aarch64
+    - win-64
+
+conda_dependencies:
+  type: str
+  help: |
+    Extra conda dependencies, comma separated, with optional version specs
+    (e.g. "pytorch >=2.0, xtb-python"). Leave blank for none.
+  default: ""
+
+pypi_dependencies:
+  type: str
+  help: |
+    Extra PyPI dependencies, comma separated, with optional version specs
+    (e.g. "mace-torch>=0.3.15"). The "avogadro" wheel, which provides the
+    binary protocol helper, is always added for you. Leave blank for none.
+  default: ""
+
+# --- The energy model ------------------------------------------------------
+
+example_backend:
+  type: str
+  help: |
+    What should the generated model compute? Both variants run as soon as they
+    are generated; replace the physics with your own once the plumbing works.
+  default: builtin
+  choices:
+    A built-in Lennard-Jones potential, no extra dependencies: builtin
+    An ASE calculator (as avogadro-mace / avogadro-mattersim): ase
+
+model_identifier:
+  type: str
+  help: |
+    Identifier for the energy model. This is the argument Avogadro passes to
+    your entry point, and the key you dispatch on in __init__.py.
+  default: "{{ short_name | title }}"
+  validator: >-
+    {% if not model_identifier %}
+    An identifier is required.
+    {% elif not model_identifier.replace('-', '').replace('_', '').isalnum() %}
+    Identifiers may only contain ASCII letters, digits, hyphens and underscores.
+    {% endif %}
+
+# Python module holding the model: "MACE-OFF23" -> "mace_off23".
+model_module:
+  type: str
+  when: false
+  default: "{{ model_identifier | lower | replace('-', '_') }}"
+
+model_name:
+  type: str
+  help: |
+    Display name shown in Avogadro's force field menus. Usually the same as the
+    identifier.
+  default: "{{ model_identifier }}"
+
+model_description:
+  type: str
+  help: Longer description shown in the force field selection dialog
+  default: "Calculate {{ model_identifier }} energies and gradients"
+
+# --- Declared capabilities -------------------------------------------------
+#
+# These become the `support.*` keys Avogadro reads to decide when the model may
+# be offered, and they gate which branches are generated in the request loop.
+
+support_elements:
+  type: str
+  help: |
+    Atomic numbers the model handles, as a range string (e.g. "1, 6-9, 16-17").
+  default: "{% if example_backend == 'ase' %}1, 6-8, 13, 28-29, 46-47, 78-79{% else %}1-118{% endif %}"
+
+support_unit_cell:
+  type: bool
+  help: |
+    Handle periodic systems? Generates unit-cell setup and the filter that drops
+    the periodic image atoms Avogadro includes in the bootstrap CJSON.
+  default: "{{ example_backend == 'ase' }}"
+  # Only offered for the ASE backend, which gets the minimum image convention
+  # from ASE. The built-in Lennard-Jones is non-periodic, and a periodic
+  # potential that quietly ignored the cell would be worse than no option.
+  when: "{{ example_backend == 'ase' }}"
+
+support_ions:
+  type: bool
+  help: Allow molecules with a non-zero total charge?
+  default: false
+
+support_radicals:
+  type: bool
+  help: Allow open-shell molecules (spin multiplicity != 1)?
+  default: false
+
+support_batch:
+  type: bool
+  help: |
+    Evaluate several conformers per request? Worth it when the model is
+    genuinely batched (a GPU network); pure overhead otherwise. Avogadro only
+    sends batch requests when this is declared true.
+  default: false
+
+support_hessians:
+  type: bool
+  help: |
+    Provide Hessians? The generated implementation is a central difference of
+    the gradient, which costs 6N evaluations.
+  default: false
+
+# --- Optional extras -------------------------------------------------------
+
+include_setup:
+  type: bool
+  help: |
+    Add an "{{ plugin_name }}-setup" entry point? Avogadro runs it once after
+    installation, which is where a model downloads its weights.
+  default: "{{ example_backend == 'ase' }}"
+
+include_charges:
+  type: bool
+  help: |
+    Also provide partial charges as an electrostatic model? This is a separate
+    one-shot script, not part of the energy loop.
+  default: false
+
+charges_identifier:
+  type: str
+  help: Identifier for the partial charge model
+  default: "{{ model_module }}_charges"
+  when: "{{ include_charges }}"
+
+include_user_options:
+  type: bool
+  help: |
+    Add a user-options dialog for the model (e.g. a device or accuracy choice)?
+    Values arrive under "options" in the bootstrap JSON.
+  default: false
+
+include_tests:
+  type: bool
+  help: |
+    Include a pytest scaffold? The tests drive the real binary protocol end to
+    end and check the analytic gradient against finite differences.
+  default: true
+
+_message_after_copy: |
+
+  Created {{ plugin_name }} in {{ _copier_conf.dst_path }}.
+
+  Next steps:
+
+    cd {{ _copier_conf.dst_path }}
+    pixi install
+  {%- if include_setup %}
+    pixi run setup
+  {%- endif %}
+  {%- if include_tests %}
+    pixi run test
+  {%- endif %}
+
+  To try it in Avogadro, use Extensions -> Plugin Manager -> Install from
+  directory and pick that folder. The model then appears in the force field
+  list as "{{ model_name }}".
+
+  Then edit src/{{ module_name }}/{{ model_module }}.py: only the marked
+  calculation function needs to change, the protocol loop around it does not.

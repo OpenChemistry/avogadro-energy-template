@@ -1,0 +1,134 @@
+[project]
+name = "{{ plugin_name }}"
+version = "0.1.0"
+description = "{{ description }}"
+authors = [{name = "{{ author_name }}", email = "{{ author_email }}"}]
+license = "{{ license }}"
+readme = "README.md"
+requires-python = ">={{ python_requires }}"
+{%- set extra_pypi = pypi_dependencies.split(',') | map('trim') | select | list %}
+{%- set pypi = ["avogadro>=2.0"] + (["ase>=3.23"] if example_backend == "ase" else []) + extra_pypi %}
+# The "avogadro" wheel provides avogadro.energy, the binary protocol helper
+# this plugin builds on, so there is no copy of the protocol code to maintain
+# here. It brings numpy with it.
+dependencies = [{% for dep in pypi %}"{{ dep }}"{{ ", " if not loop.last }}{% endfor %}]
+
+# Avogadro runs a feature of this plugin as:
+#     pixi run {{ plugin_name }} <identifier> --protocol binary-v1
+# The entry point name must begin with "avogadro-" for Avogadro to find it, and
+# by convention it is the plugin name itself.
+[project.scripts]
+{{ plugin_name }} = "{{ module_name }}:main"
+{%- if include_setup %}
+# Avogadro runs the "-setup" entry point once, after installing the plugin.
+{{ plugin_name }}-setup = "{{ module_name }}:setup"
+{%- endif %}
+
+[build-system]
+{% if build_backend == "uv_build" -%}
+build-backend = "uv_build"
+requires = ["uv_build>=0.10.2,<0.11.0"]
+{%- else -%}
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/{{ module_name }}"]
+{%- endif %}
+
+# --- Pixi ------------------------------------------------------------------
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = [{% for p in platforms %}"{{ p }}"{{ ", " if not loop.last }}{% endfor %}]
+
+[tool.pixi.dependencies]
+python = ">={{ python_requires }}"
+{%- set conda = conda_dependencies.split(',') | map('trim') | select | list %}
+{%- for dep in conda %}
+{%- set parts = dep.split(' ', 1) %}
+{{ parts[0] }} = "{{ (parts[1] if parts | length > 1 else '*') | trim }}"
+{%- endfor %}
+
+# Installing the plugin itself as an editable dependency is what lets Avogadro
+# invoke the entry point with `pixi run`.
+[tool.pixi.pypi-dependencies]
+{{ module_name }} = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+{%- if include_setup %}
+setup = "{{ plugin_name }}-setup"
+{%- endif %}
+{% if include_tests %}
+# pytest lives in a separate environment so that it is not installed alongside
+# the plugin when Avogadro sets it up for a user. `pixi run test` finds the
+# task there automatically.
+[tool.pixi.feature.test.dependencies]
+pytest = "*"
+
+[tool.pixi.feature.test.tasks]
+test = "pytest"
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+test = { features = ["test"], solve-group = "default" }
+{%- endif %}
+
+# --- Avogadro --------------------------------------------------------------
+
+[tool.avogadro]
+minimum-avogadro-version = "2.0"
+
+# Each feature is an entry in an array of tables, keyed by feature type. The
+# other supported types are electrostatic-models, file-formats, input-generators
+# and menu-commands.
+#
+# `protocol = "binary-v1"` selects the framed binary exchange implemented by
+# avogadro.energy. Omitting it selects the older line-based text protocol, which
+# cannot carry batches or Hessians.
+#
+# The support.* keys are promises Avogadro holds you to: it refuses to run the
+# model on a molecule outside them, so they must match what the code below
+# actually does.
+[[tool.avogadro.energy-models]]
+identifier = "{{ model_identifier }}"
+model-name = "{{ model_name }}"
+description = "{{ model_description }}"
+input-format = "cjson"
+protocol = "binary-v1"
+support.gradients = true
+support.elements = "{{ support_elements }}"
+support.unit-cell = {{ support_unit_cell | lower }}
+support.ions = {{ support_ions | lower }}
+support.radicals = {{ support_radicals | lower }}
+support.batch = {{ support_batch | lower }}
+support.hessians = {{ support_hessians | lower }}
+{%- if include_user_options %}
+# A filesystem path relative to the plugin directory, so the options JSON can
+# live anywhere; keeping it inside the package means it ships in a built wheel.
+user-options = "src/{{ module_name }}/customization/{{ model_module }}_options.json"
+{%- endif %}
+{%- if include_charges %}
+
+# An electrostatic model is a one-shot script, not a long-running server: it
+# reads the molecule from stdin once and prints {"charges": [...]}.
+[[tool.avogadro.electrostatic-models]]
+identifier = "{{ charges_identifier }}"
+model-name = "{{ model_name }}"
+input-format = "cjson"
+support.elements = "{{ support_elements }}"
+support.charges = true
+support.potentials = false
+{%- endif %}
+
+# A second energy model, for reference. Uncomment it, add a matching case to
+# __init__.py, and it will appear in the force field list alongside the first.
+#
+# [[tool.avogadro.energy-models]]
+# identifier = "{{ model_identifier }}-Fast"
+# model-name = "{{ model_name }} (fast)"
+# description = "A cheaper variant of {{ model_name }}"
+# input-format = "cjson"
+# protocol = "binary-v1"
+# support.gradients = true
+# support.elements = "{{ support_elements }}"

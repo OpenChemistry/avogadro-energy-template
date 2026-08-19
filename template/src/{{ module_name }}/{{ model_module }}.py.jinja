@@ -1,0 +1,296 @@
+#  This source file is part of the Avogadro project
+#  This source code is released under the {{ license }} License, (see "LICENSE").
+#  https://github.com/{{ github_user }}/{{ plugin_name }}/
+
+"""{{ model_name }} energy model, over the binary-v1 protocol.
+
+The file has two halves. Everything above "the protocol loop" is the model and
+is meant to be replaced; everything below it is plumbing that stays as it is.
+
+Avogadro works in kJ/mol and Angstrom, and wants the *gradient* dE/dx, not the
+force. Getting either of those wrong shows up as an optimizer that runs uphill.
+"""
+
+import json
+import sys
+{% if example_backend == "ase" %}
+# Third-party imports go to stderr while they run: a stray print or warning on
+# stdout corrupts the binary stream, and the failure looks like a protocol bug
+# rather than a chatty dependency.
+_real_stdout = sys.stdout
+sys.stdout = sys.stderr
+
+import numpy as np
+from ase import Atoms
+{%- if support_unit_cell %}
+from ase.cell import Cell
+{%- endif %}
+from ase.calculators.emt import EMT
+
+sys.stdout = _real_stdout
+del _real_stdout
+{% else %}
+import numpy as np
+{% endif %}
+from avogadro.energy import EnergyServer
+
+# =========================================================================
+# The model
+# =========================================================================
+{% if example_backend == "ase" %}
+# ASE reports eV and eV/Angstrom.
+_EV_TO_KJ_MOL = 96.4853321
+
+
+def make_calculator():
+    """Build the ASE calculator this model wraps.
+
+    EMT is bundled with ASE and runs immediately, which makes the generated
+    plugin testable, but it is only parameterised for a handful of elements.
+    Replace it with the real thing, e.g.
+
+        from mace.calculators import mace_off
+        return mace_off(default_dtype="float32", device="cpu")
+
+    and update support.elements in pyproject.toml to match. If the calculator
+    is expensive to construct, build it once here rather than per request.
+    """
+    return EMT()
+
+
+def _prepare(mol_cjson, options):
+    """Set up the ASE Atoms object the request loop will move around."""
+    numbers = np.array(mol_cjson["atoms"]["elements"]["number"])
+    coords = np.array(
+        mol_cjson["atoms"]["coords"]["3d"], dtype=float
+    ).reshape(-1, 3)
+
+    # num_atoms must be the full count Avogadro sent: it is the atom count in
+    # every binary frame, in both directions, images included.
+    num_atoms = len(numbers)
+{%- if support_unit_cell %}
+
+    # For a periodic system Avogadro includes image atoms, whose fractional
+    # coordinates sit at ~1.0 and which are duplicates of the atoms at 0.0.
+    # Handing those to a calculator double counts them, so keep a mask and use
+    # it to translate between Avogadro's atom list and ASE's.
+    keep = np.ones(num_atoms, dtype=bool)
+
+    if "unitCell" in mol_cjson:
+        fractional = mol_cjson["atoms"]["coords"].get("3dFractional", [])
+        if fractional:
+            frac = np.array(fractional, dtype=float).reshape(-1, 3)
+            keep = ~np.any(np.abs(frac - 1.0) < 1e-4, axis=1)
+
+        lattice = np.array(
+            mol_cjson["unitCell"]["cellVectors"], dtype=float
+        ).reshape(3, 3)
+        atoms = Atoms(
+            numbers[keep], coords[keep], cell=Cell(lattice), pbc=True
+        )
+    else:
+        atoms = Atoms(numbers[keep], coords[keep], pbc=False)
+{%- else %}
+
+    keep = np.ones(num_atoms, dtype=bool)
+    atoms = Atoms(numbers, coords, pbc=False)
+{%- endif %}
+
+    atoms.calc = make_calculator()
+    return {"atoms": atoms, "keep": keep, "num_atoms": num_atoms}
+
+
+def _energy(model, coords):
+    """Energy in kJ/mol for one geometry, shape (num_atoms, 3) in Angstrom."""
+    model["atoms"].set_positions(coords[model["keep"]])
+    return float(model["atoms"].get_total_energy()) * _EV_TO_KJ_MOL
+
+
+def _energy_and_gradient(model, coords):
+    """Energy and dE/dx, in kJ/mol and kJ/mol/Angstrom."""
+    atoms = model["atoms"]
+    atoms.set_positions(coords[model["keep"]])
+
+    energy = float(atoms.get_total_energy()) * _EV_TO_KJ_MOL
+
+    # ASE returns forces, and force = -gradient. The gradient goes back at the
+    # full atom count, with zeros for the image atoms ASE never saw.
+    gradient = np.zeros((model["num_atoms"], 3), dtype=np.float64)
+    gradient[model["keep"]] = atoms.get_forces() * -_EV_TO_KJ_MOL
+    return energy, gradient
+{% else %}
+# A pairwise 12-6 Lennard-Jones, written in the "minimum distance" form
+#
+#     E = D [ (rm/r)^12 - 2 (rm/r)^6 ]
+#
+# whose minimum is -D at r = rm. This mirrors Avogadro's own Calc::LennardJones
+# (avogadrolibs/avogadro/calc/lennardjones.cpp) so the numbers are comparable.
+#
+# It is a placeholder that runs with no dependencies and has exact analytic
+# gradients to check yours against. It is not a force field: there are no bonds,
+# no electrostatics, and no element-pair parameters.
+_DEPTH = 100.0  # kJ/mol, the well depth D
+_EXPONENT = 6  # n, giving the 2n-n form above
+
+# van der Waals radii in Angstrom; rm for a pair is the sum of the two radii.
+_VDW_RADII = {
+    1: 1.20, 5: 1.92, 6: 1.70, 7: 1.55, 8: 1.52, 9: 1.47,
+    14: 2.10, 15: 1.80, 16: 1.80, 17: 1.75, 35: 1.85, 53: 1.98,
+}
+_VDW_DEFAULT = 2.00
+
+# Coincident atoms would divide by zero; clamp the separation as Avogadro does.
+_MIN_DISTANCE = 0.1
+
+
+def _prepare(mol_cjson, options):
+    """Precompute whatever does not change as the geometry moves."""
+    numbers = np.array(mol_cjson["atoms"]["elements"]["number"])
+    num_atoms = len(numbers)
+
+    radii = np.array(
+        [_VDW_RADII.get(int(z), _VDW_DEFAULT) for z in numbers], dtype=float
+    )
+    # rm[i, j] = radius(i) + radius(j)
+    rm = radii[:, None] + radii[None, :]
+
+    return {"rm": rm, "num_atoms": num_atoms}
+
+
+def _energy_and_gradient(model, coords):
+    """Energy and dE/dx, in kJ/mol and kJ/mol/Angstrom.
+
+    coords has shape (num_atoms, 3) in Angstrom.
+    """
+    delta = coords[:, None, :] - coords[None, :, :]  # (N, N, 3), r_i - r_j
+    r = np.linalg.norm(delta, axis=-1)
+    # An atom does not interact with itself: an infinite separation drops the
+    # diagonal out of both the energy and the gradient without a mask.
+    np.fill_diagonal(r, np.inf)
+    r = np.maximum(r, _MIN_DISTANCE)
+
+    ratio = (model["rm"] / r) ** _EXPONENT
+    # Each unordered pair appears twice in the full matrix.
+    energy = 0.5 * _DEPTH * np.sum(ratio * ratio - 2.0 * ratio)
+
+    # dE/dr = -2 D n (rm/r)^n [(rm/r)^n - 1] / r, and the chain rule gives
+    # dr_ij/dx_i = (x_i - x_j) / r_ij. Summing row i over j leaves dE/dx_i.
+    dedr = -2.0 * _DEPTH * _EXPONENT * ratio * (ratio - 1.0) / r
+    gradient = np.sum((dedr / r)[:, :, None] * delta, axis=1)
+
+    return float(energy), gradient
+
+
+def _energy(model, coords):
+    """Energy in kJ/mol for one geometry, shape (num_atoms, 3) in Angstrom."""
+    return _energy_and_gradient(model, coords)[0]
+{% endif %}
+{%- if support_hessians %}
+
+
+def _hessian(model, coords, step=1.0e-4):
+    """Central difference of the gradient, as a (3N, 3N) matrix.
+
+    This costs 6N energy-and-gradient evaluations, so it is only sensible for a
+    cheap model; a model with analytic second derivatives should return those
+    instead.
+    """
+    dim = 3 * model["num_atoms"]
+    hessian = np.zeros((dim, dim), dtype=np.float64)
+    flat = np.asarray(coords, dtype=np.float64).reshape(-1).copy()
+
+    for k in range(dim):
+        original = flat[k]
+
+        flat[k] = original + step
+        _, plus = _energy_and_gradient(model, flat.reshape(-1, 3))
+        flat[k] = original - step
+        _, minus = _energy_and_gradient(model, flat.reshape(-1, 3))
+
+        flat[k] = original
+        hessian[k] = (plus - minus).reshape(-1) / (2.0 * step)
+
+    # The two one-sided errors differ, so the raw matrix is only nearly
+    # symmetric. Averaging it with its transpose is the standard repair.
+    return 0.5 * (hessian + hessian.T)
+{%- endif %}
+
+
+# =========================================================================
+# The protocol loop
+# =========================================================================
+
+
+def run():
+    # Avogadro sends one compact JSON line, then switches the same pipe to
+    # binary frames. Read it from sys.stdin.buffer rather than sys.stdin: the
+    # text wrapper reads ahead, and would swallow the first binary frame.
+    bootstrap = json.loads(sys.stdin.buffer.readline())
+    mol_cjson = bootstrap["cjson"]
+
+    # Also available in the bootstrap, whether or not this model uses them:
+    #   bootstrap["charge"]         total charge
+    #   bootstrap["spin"]           total spin multiplicity
+    #   bootstrap["selectedAtoms"]  indices the user has selected
+{%- if include_user_options %}
+    options = bootstrap.get("options", {})
+{%- else %}
+    #   bootstrap["options"]        values from a user-options dialog
+    options = bootstrap.get("options", {})
+{%- endif %}
+
+    model = _prepare(mol_cjson, options)
+
+    # The loop ends when Avogadro closes stdin, which is how the model is
+    # unloaded. Everything written to stdout from here on must be a frame.
+    with EnergyServer(
+        sys.stdin.buffer, sys.stdout.buffer, model["num_atoms"]
+    ) as server:
+        for request in server.requests():
+            try:
+{%- if support_hessians %}
+                if request.wants_hessian:
+                    request.send_hessian(_hessian(model, request.coords))
+                    continue
+
+{% endif %}
+{%- if support_batch %}
+                if request.is_batch:
+                    # request.coords is (batch, num_atoms, 3) here. A model that
+                    # is genuinely batched should replace this loop with a
+                    # single batched call -- that is the whole point of
+                    # declaring support.batch.
+                    if request.wants_gradient:
+                        gradients = np.array(
+                            [
+                                _energy_and_gradient(model, frame)[1]
+                                for frame in request.coords
+                            ]
+                        )
+                        request.send_gradients(gradients)
+                    else:
+                        energies = np.array(
+                            [_energy(model, frame) for frame in request.coords]
+                        )
+                        request.send_energies(energies)
+                    continue
+
+{% endif %}
+                # The fused request is what the optimizer sends, and answering
+                # it with one evaluation instead of two is most of the win.
+                if request.wants_energy_and_gradient:
+                    energy, gradient = _energy_and_gradient(
+                        model, request.coords
+                    )
+                    request.send_energy_and_gradient(energy, gradient)
+                elif request.wants_gradient:
+                    request.send_gradient(
+                        _energy_and_gradient(model, request.coords)[1]
+                    )
+                else:
+                    request.send_energy(_energy(model, request.coords))
+            except Exception as error:  # noqa: BLE001
+                # Report the failure in-band and keep serving. Letting the
+                # exception escape kills the process, and Avogadro sees only a
+                # model that stopped answering.
+                request.send_error(str(error))
