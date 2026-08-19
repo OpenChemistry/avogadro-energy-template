@@ -154,7 +154,17 @@ def _prepare(mol_cjson, options):
     # rm[i, j] = radius(i) + radius(j)
     rm = radii[:, None] + radii[None, :]
 
-    return {"rm": rm, "num_atoms": num_atoms}
+    # Which pairs interact: everything except an atom with itself and the pairs
+    # that are directly bonded, since a van der Waals term across a bond is
+    # just a very stiff and very wrong bond stretch. The bond list arrives as
+    # flat pairs of atom indices.
+    interacting = ~np.eye(num_atoms, dtype=bool)
+    bonds = mol_cjson.get("bonds", {}).get("connections", {}).get("index", [])
+    for begin, end in zip(bonds[0::2], bonds[1::2]):
+        interacting[begin, end] = False
+        interacting[end, begin] = False
+
+    return {"rm": rm, "interacting": interacting, "num_atoms": num_atoms}
 
 
 def _energy_and_gradient(model, coords):
@@ -164,10 +174,11 @@ def _energy_and_gradient(model, coords):
     """
     delta = coords[:, None, :] - coords[None, :, :]  # (N, N, 3), r_i - r_j
     r = np.linalg.norm(delta, axis=-1)
-    # An atom does not interact with itself: an infinite separation drops the
-    # diagonal out of both the energy and the gradient without a mask.
-    np.fill_diagonal(r, np.inf)
-    r = np.maximum(r, _MIN_DISTANCE)
+    # Putting the non-interacting pairs at infinite separation drops them out
+    # of both the energy and the gradient without a second mask.
+    r = np.where(
+        model["interacting"], np.maximum(r, _MIN_DISTANCE), np.inf
+    )
 
     ratio = (model["rm"] / r) ** _EXPONENT
     # Each unordered pair appears twice in the full matrix.

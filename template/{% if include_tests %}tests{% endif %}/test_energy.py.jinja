@@ -47,15 +47,30 @@ def test_fused_request_agrees_with_the_separate_ones(water):
 def test_the_model_stays_up_across_requests(water):
     """Avogadro reuses one process for a whole optimization."""
     coords = coordinates(water)
-    shifted = coords + 0.05
+    # Stretch one bond. A rigid translation would not do: the energy is
+    # invariant under it, which is what the next test checks.
+    stretched = coords.copy()
+    stretched[1] *= 1.1
 
     first, second, again = exchange(
-        water, [(coords, 0), (shifted, 0), (coords, 0)]
+        water, [(coords, 0), (stretched, 0), (coords, 0)]
     )
 
     assert first != pytest.approx(second)
     # No state leaks between requests: the same geometry gives the same energy.
     assert first == pytest.approx(again)
+
+
+def test_energy_is_translation_invariant(water):
+    """A non-periodic energy cannot depend on where the molecule sits.
+
+    Failing this usually means the model kept the bootstrap coordinates
+    somewhere instead of using the ones each request carries.
+    """
+    coords = coordinates(water)
+    here, there = exchange(water, [(coords, 0), (coords + 3.0, 0)])
+
+    assert here == pytest.approx(there)
 
 
 def test_gradient_matches_finite_differences(water):
