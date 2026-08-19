@@ -232,6 +232,46 @@ def _hessian(model, coords, step=1.0e-4):
 # =========================================================================
 
 
+def _respond(model, request):
+    """Answer one request with exactly one response frame."""
+{%- if support_hessians %}
+    if request.wants_hessian:
+        request.send_hessian(_hessian(model, request.coords))
+        return
+{%- endif %}
+{%- if support_batch %}
+
+    if request.is_batch:
+        # request.coords is (batch, num_atoms, 3) here. A model that is
+        # genuinely batched should replace this loop with a single batched
+        # call -- that is the whole point of declaring support.batch.
+        if request.wants_gradient:
+            request.send_gradients(
+                np.array(
+                    [
+                        _energy_and_gradient(model, frame)[1]
+                        for frame in request.coords
+                    ]
+                )
+            )
+        else:
+            request.send_energies(
+                np.array([_energy(model, frame) for frame in request.coords])
+            )
+        return
+{%- endif %}
+
+    # The fused request is what the optimizer sends, and answering it with one
+    # evaluation instead of two is most of the win.
+    if request.wants_energy_and_gradient:
+        energy, gradient = _energy_and_gradient(model, request.coords)
+        request.send_energy_and_gradient(energy, gradient)
+    elif request.wants_gradient:
+        request.send_gradient(_energy_and_gradient(model, request.coords)[1])
+    else:
+        request.send_energy(_energy(model, request.coords))
+
+
 def run():
     # Avogadro sends one compact JSON line, then switches the same pipe to
     # binary frames. Read it from sys.stdin.buffer rather than sys.stdin: the
@@ -243,63 +283,21 @@ def run():
     #   bootstrap["charge"]         total charge
     #   bootstrap["spin"]           total spin multiplicity
     #   bootstrap["selectedAtoms"]  indices the user has selected
-{%- if include_user_options %}
-    options = bootstrap.get("options", {})
-{%- else %}
+{%- if not include_user_options %}
     #   bootstrap["options"]        values from a user-options dialog
-    options = bootstrap.get("options", {})
 {%- endif %}
+    options = bootstrap.get("options", {})
 
     model = _prepare(mol_cjson, options)
 
-    # The loop ends when Avogadro closes stdin, which is how the model is
+    # The loop ends when Avogadro closes stdin, which is how the model gets
     # unloaded. Everything written to stdout from here on must be a frame.
     with EnergyServer(
         sys.stdin.buffer, sys.stdout.buffer, model["num_atoms"]
     ) as server:
         for request in server.requests():
             try:
-{%- if support_hessians %}
-                if request.wants_hessian:
-                    request.send_hessian(_hessian(model, request.coords))
-                    continue
-
-{% endif %}
-{%- if support_batch %}
-                if request.is_batch:
-                    # request.coords is (batch, num_atoms, 3) here. A model that
-                    # is genuinely batched should replace this loop with a
-                    # single batched call -- that is the whole point of
-                    # declaring support.batch.
-                    if request.wants_gradient:
-                        gradients = np.array(
-                            [
-                                _energy_and_gradient(model, frame)[1]
-                                for frame in request.coords
-                            ]
-                        )
-                        request.send_gradients(gradients)
-                    else:
-                        energies = np.array(
-                            [_energy(model, frame) for frame in request.coords]
-                        )
-                        request.send_energies(energies)
-                    continue
-
-{% endif %}
-                # The fused request is what the optimizer sends, and answering
-                # it with one evaluation instead of two is most of the win.
-                if request.wants_energy_and_gradient:
-                    energy, gradient = _energy_and_gradient(
-                        model, request.coords
-                    )
-                    request.send_energy_and_gradient(energy, gradient)
-                elif request.wants_gradient:
-                    request.send_gradient(
-                        _energy_and_gradient(model, request.coords)[1]
-                    )
-                else:
-                    request.send_energy(_energy(model, request.coords))
+                _respond(model, request)
             except Exception as error:  # noqa: BLE001
                 # Report the failure in-band and keep serving. Letting the
                 # exception escape kills the process, and Avogadro sees only a
