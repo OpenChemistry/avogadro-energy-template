@@ -49,6 +49,11 @@ avogadro-myff/
     └── test_energy.py
 ```
 
+The tests drive the real binary protocol against the real entry point, so they
+catch what actually breaks energy plugins: a gradient returned with the sign of
+a force, an energy left in eV or Hartree, and anything writing to stdout, which
+is the protocol.
+
 The generated plugin runs as soon as it is created, either on a built-in
 Lennard-Jones potential with no dependencies, or on an
 [ASE](https://wiki.fysik.dtu.dk/ase/) calculator — the shape used by

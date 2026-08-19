@@ -45,9 +45,13 @@ That single long-running process is the thing to keep in mind while editing
   than raising, so the process survives to answer the next one.
 {%- if include_tests %}
 
-`pixi run test` drives the real protocol against the real entry point, and
-checks the analytic gradient against finite differences of the energy — the
-check that catches a sign or unit error before Avogadro does.
+`pixi run test` drives the real protocol against the real entry point in a
+subprocess. It checks the analytic gradient against finite differences of the
+energy, which is what catches a sign or unit error before Avogadro does, and it
+asserts that stdout carries protocol frames and nothing else, which catches the
+stray print. Note that a `print()` can pass a casual manual test and still be a
+bug: Python block-buffers text stdout into a pipe, so the output often appears
+harmlessly at exit right up until some flush lands it between two frames.
 {%- endif %}
 
 ### Replacing the model
