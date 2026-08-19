@@ -10,7 +10,7 @@ from avogadro.energy import (
     FLAG_REQUEST_HESSIAN,
 )
 
-from conftest import coordinates, exchange
+from conftest import coordinates, exchange{% if support_unit_cell %}, image_mask{% endif %}
 
 
 def test_energy_request_returns_a_finite_number(water):
