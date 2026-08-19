@@ -1,0 +1,68 @@
+#  This source file is part of the Avogadro project
+#  This source code is released under the {{ license }} License, (see "LICENSE").
+#  https://github.com/{{ github_user }}/{{ plugin_name }}/
+
+"""Entry point for the {{ plugin_name }} plugin.
+
+Avogadro calls this as:
+    {{ plugin_name }} <identifier> --protocol binary-v1 [--lang <locale>] [--debug]
+
+with the molecule bootstrap JSON on stdin as one compact line, followed by
+binary coordinate frames for as long as the model stays loaded.
+"""
+
+import argparse
+{% if include_setup %}
+
+def setup():
+    """Prepare the model so the first energy evaluation is not the slow one.
+
+    Avogadro runs this once after installing the plugin, with the output shown
+    to the user, so this is where model weights get downloaded. Anything
+    printed here is progress reporting, not protocol traffic.
+    """
+{%- if example_backend == "ase" %}
+    from ase.build import molecule
+
+    from .{{ model_module }} import make_calculator
+
+    print("Preparing {{ model_name }}...", flush=True)
+    atoms = molecule("H2O")
+    atoms.calc = make_calculator()
+    atoms.get_potential_energy()
+    print("{{ model_name }} setup complete.")
+{%- else %}
+    # The built-in potential has nothing to download. Replace this with the
+    # one-time work your model needs -- fetching weights, compiling kernels.
+    print("{{ model_name }} setup complete.")
+{%- endif %}
+
+{% endif %}
+
+def main():
+    parser = argparse.ArgumentParser("{{ plugin_name }}")
+    # Avogadro always passes the feature identifier as the first argument.
+    parser.add_argument("feature")
+    # Every plugin must accept these without crashing, even if it ignores them.
+    parser.add_argument("--lang", nargs="?", default="en")
+    parser.add_argument("--debug", action="store_true")
+    # Sent for any energy model declaring protocol = "binary-v1".
+    parser.add_argument("--protocol", nargs="?", default="binary-v1")
+{%- if include_charges %}
+    # Sent for electrostatic models, to say which quantity is wanted.
+    parser.add_argument("--charges", action="store_true")
+    parser.add_argument("--potential", action="store_true")
+{%- endif %}
+    args = parser.parse_args()
+
+    # Handlers are imported inside each branch so that a slow dependency is
+    # only loaded by the feature that actually needs it.
+    match args.feature:
+        case "{{ model_identifier }}":
+            from .{{ model_module }} import run
+            run()
+{%- if include_charges %}
+        case "{{ charges_identifier }}":
+            from .charges import run
+            run()
+{%- endif %}
