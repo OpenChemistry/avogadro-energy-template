@@ -4,10 +4,14 @@ import numpy as np
 import pytest
 
 from avogadro.energy import (
+{%- if support_batch %}
     FLAG_BATCH_MODE,
+{%- endif %}
     FLAG_REQUEST_ENERGY_AND_GRADIENT,
     FLAG_REQUEST_GRADIENT,
+{%- if support_hessians %}
     FLAG_REQUEST_HESSIAN,
+{%- endif %}
 )
 
 from conftest import coordinates, exchange{% if support_unit_cell %}, image_mask{% endif %}
