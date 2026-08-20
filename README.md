@@ -4,19 +4,23 @@ A [copier](https://copier.readthedocs.io/) template for Avogadro 2 **energy
 models** — the plugins that appear in the force field list and answer energy,
 gradient and Hessian requests during optimization and dynamics.
 
-For menu commands, the far more common plugin shape, use
-[avogadro-plugin-template](../avogadro-plugin-template) instead. File formats
-and input generators are not covered by either; see
-[avo-plugin-demo](https://github.com/OpenChemistry/avo-plugin-demo).
+For menu commands, the far more common plugin type, use
+[avogadro-command-template](https://github.com/openchemistry/avogadro-command-template) instead. 
+If you're interested in electrostatic models, file formats, and [input generators](https://github.com/openchemistry/avogenerators)
+please ask on the [Avogadro forum](https://discuss.avogadro.cc/)
 
 ## Usage
 
 ```bash
 pixi global install copier     # or: uv tool install copier
-copier copy /path/to/avogadro-energy-template avogadro-myff
+copier copy gh:openchemistry/avogadro-energy-template avogadro-myff
+# you'll be asked some questions like the name of your plugin and dependencies
 cd avogadro-myff
+# edit your code as needed, e.g. src/{{module name}}/*.py
 pixi install
 pixi run test
+# now you can use "Install from Directory..." in the Manage Plugins dialog
+# to test out 
 ```
 
 To pull in later improvements to this template:
@@ -40,16 +44,16 @@ avogadro-myff/
 ├── src/avogadro_myff/
 │   ├── __init__.py         argparse + match/case, optional setup()
 │   ├── myff.py             the model, then the protocol loop
-│   ├── charges.py          optional electrostatic model
+│   ├── charges.py          optional electrostatic model - remove it if you don't assign charges
 │   └── customization/
-│       └── myff_options.json   optional user-options dialog
+│       └── myff_options.json   optional user-options dialog (e.g., solvent)
 └── tests/
     ├── conftest.py         a client for the binary protocol
     ├── data/water.json     a real Avogadro bootstrap JSON
     └── test_energy.py
 ```
 
-The tests drive the real binary protocol against the real entry point, so they
+The tests drive the real energy protocol against the real entry point, so they
 catch what actually breaks energy plugins: a gradient returned with the sign of
 a force, an energy left in eV or Hartree, and anything writing to stdout, which
 is the protocol.
@@ -100,7 +104,7 @@ For anything else, pick either one, then replace `LICENSE` and change the
 
 ## Reference
 
-- [Writing plugins](https://two.avogadro.cc/develop/plugins/)
-- [Input and output JSON](https://two.avogadro.cc/develop/plugins/io.html)
+- [Writing plugins](https://avogadro.cc/develop/plugins/)
+- [Input and output JSON](https://avogadro.cc/develop/plugins/io.html)
 - `avogadro/qtplugins/forcefield/scriptenergy.cpp` in avogadrolibs — the C++
   side of everything above
