@@ -151,7 +151,11 @@ def main():
     tracked = data.get("tool", {}).get("update-dependencies", {}).get("track", [])
     pixi = data.get("tool", {}).get("pixi", {})
     workspace = pixi.get("workspace", pixi.get("project", {}))
-    platforms = workspace.get("platforms", [])
+    # Entries are subdirs, or tables like { name = "linux-cuda", platform = "linux-64" }.
+    platforms = sorted({
+        p["platform"] if isinstance(p, dict) else p
+        for p in workspace.get("platforms", [])
+    })
     latest_cache = {}
     changes = []
 
