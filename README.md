@@ -41,6 +41,7 @@ avogadro-myff/
 ├── LICENSE
 ├── .gitignore
 ├── .gitattributes          pixi.lock as a binary-merge, generated file
+├── .github/               daily check for new PyPI / conda-forge releases
 ├── src/avogadro_myff/
 │   ├── __init__.py         argparse + match/case, optional setup()
 │   ├── myff.py             the model, then the protocol loop
@@ -95,6 +96,25 @@ Hessians, and it is not generated here.
 - `user-options` is a filesystem path relative to the plugin directory, so the
   options JSON can live anywhere; this template keeps it inside the package so
   it also ships in a built wheel.
+
+## Dependency updates
+
+The `track_dependencies` question lists packages to watch, and becomes
+`[tool.update-dependencies]` in `pyproject.toml`. Once the plugin is on GitHub,
+`.github/workflows/update-dependencies.yml` checks daily for new releases:
+PyPI for packages in `[project].dependencies` or
+`[tool.pixi.pypi-dependencies]`, conda-forge for `[tool.pixi.dependencies]`. A
+conda-forge release only counts once it is built for every platform the plugin
+lists, because pixi solves all of them. When a tracked package has a new
+release, the workflow opens a pull request that raises that package's `>=`
+floor and bumps the patch version in `[project].version`. Merge it, and
+the Avogadro plugin index picks up the new commit; installed copies then show
+"Update available", and updating reinstalls the plugin with the new release.
+
+For the workflow to open pull requests, enable *Settings → Actions → General →
+Allow GitHub Actions to create and approve pull requests* in the repository.
+If `pixi.lock` is committed, the workflow also runs `pixi lock` and includes
+the refreshed lockfile in the pull request.
 
 ## Licenses
 

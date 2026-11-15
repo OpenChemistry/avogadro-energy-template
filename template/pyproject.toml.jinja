@@ -74,6 +74,20 @@ default = { solve-group = "default" }
 test = { features = ["test"], solve-group = "default" }
 {%- endif %}
 
+# --- Dependency updates ----------------------------------------------------
+
+# .github/workflows/update-dependencies.yml checks daily for new releases of
+# each package listed here: on PyPI for [project].dependencies and
+# [tool.pixi.pypi-dependencies], on conda-forge for [tool.pixi.dependencies].
+# A conda-forge release counts once it is built for every platform above. On a
+# new release it opens a pull request that raises that package's ">=" floor and
+# bumps [project].version, so Avogadro offers installed copies the update (an
+# update reinstalls the plugin and its dependencies from scratch). Every package
+# listed needs a ">=" floor. An empty list turns the checks off.
+[tool.update-dependencies]
+{% set track = track_dependencies.split(',') | map('trim') | select | list -%}
+track = [{% for p in track %}"{{ p }}"{{ ", " if not loop.last }}{% endfor %}]
+
 # --- Avogadro --------------------------------------------------------------
 
 [tool.avogadro]
