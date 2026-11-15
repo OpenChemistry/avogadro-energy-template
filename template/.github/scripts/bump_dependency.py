@@ -48,7 +48,7 @@ def fetch_json(url):
         return json.load(response)
 
 
-def latest_pypi(package):
+def pypi_releases(package):
     data = fetch_json(f"https://pypi.org/pypi/{package}/json")
     releases = [
         version
@@ -57,10 +57,10 @@ def latest_pypi(package):
     ]
     if not releases:
         raise SystemExit(f"No final releases of {package} on PyPI")
-    return max(releases, key=release_tuple)
+    return releases
 
 
-def latest_conda(package, platforms):
+def conda_releases(package, platforms):
     if not platforms:
         raise SystemExit("No platforms in [tool.pixi.workspace]")
     data = fetch_json(f"https://api.anaconda.org/package/conda-forge/{package}")
@@ -80,7 +80,51 @@ def latest_conda(package, platforms):
         raise SystemExit(
             f"No release of {package} on conda-forge covers {', '.join(platforms)}"
         )
-    return max(complete, key=release_tuple)
+    return complete
+
+
+CLAUSE_RE = re.compile(r"\s*(<=|<|!=|>=|>|==|~=)?\s*([0-9][0-9.]*)(\.\*)?\s*")
+COMPARE = {
+    "<": lambda a, b: a < b,
+    "<=": lambda a, b: a <= b,
+    ">": lambda a, b: a > b,
+    ">=": lambda a, b: a >= b,
+    "!=": lambda a, b: a != b,
+}
+
+
+def version_spec(spec):
+    """The version part of a PEP 508 requirement or a pixi version string."""
+    spec = spec.split(";", 1)[0]
+    return re.sub(r"^\s*[A-Za-z][A-Za-z0-9._-]*\s*(\[[^\]]*\])?", "", spec)
+
+
+def newest_allowed(releases, spec, where):
+    """Newest release that every clause of spec except the floor allows.
+
+    Upper bounds are kept, so a new major version excluded by "<3" is not
+    taken. Pins (==, ~=, wildcards) cannot be tracked."""
+    releases = [v for v in releases if release_tuple(v)]
+    bounds = []
+    for clause in version_spec(spec).split(","):
+        if not clause.strip():
+            continue
+        match = CLAUSE_RE.fullmatch(clause)
+        op = match and match.group(1)
+        if match is None or op in (None, "==", "~=") or match.group(3):
+            raise SystemExit(f'{where}: cannot track "{spec}" (pinned)')
+        if op != ">=":
+            bounds.append((COMPARE[op], release_tuple(match.group(2))))
+    allowed = [
+        v for v in releases if all(ok(release_tuple(v), b) for ok, b in bounds)
+    ]
+    newest = max(releases, key=release_tuple)
+    if not allowed:
+        raise SystemExit(f'{where}: no release satisfies "{spec}"')
+    best = max(allowed, key=release_tuple)
+    if best != newest:
+        print(f'{where}: {newest} is out, but "{spec}" excludes it', file=sys.stderr)
+    return best
 
 
 def normalize(name):
@@ -156,7 +200,7 @@ def main():
         p["platform"] if isinstance(p, dict) else p
         for p in workspace.get("platforms", [])
     })
-    latest_cache = {}
+    release_cache = {}
     changes = []
 
     for package in tracked:
@@ -166,14 +210,15 @@ def main():
         if not declarations:
             raise SystemExit(f"{package} is tracked but not declared as a dependency")
         for source, header, name, spec in declarations:
-            floor = floor_of(spec, f"[{header}] {package}")
-            if (source, package) not in latest_cache:
-                latest_cache[source, package] = (
-                    latest_pypi(package)
+            where = f"[{header}] {package}"
+            floor = floor_of(spec, where)
+            if (source, package) not in release_cache:
+                release_cache[source, package] = (
+                    pypi_releases(package)
                     if source == "pypi"
-                    else latest_conda(package, platforms)
+                    else conda_releases(package, platforms)
                 )
-            latest = latest_cache[source, package]
+            latest = newest_allowed(release_cache[source, package], spec, where)
             if release_tuple(latest) <= release_tuple(floor):
                 continue
             if header == "project":
