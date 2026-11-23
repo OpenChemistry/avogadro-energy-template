@@ -38,6 +38,26 @@ _LAUNCH = [
     "from {{ module_name }} import main; main()",
 ]
 
+# The same launch, but with noise written to stdout just after the plugin has
+# claimed the protocol stream and before it imports the model. It stands in for
+# a dependency that prints on import: through Python's print, straight to file
+# descriptor 1, and from a child process, as a C library would.
+NOISY_LAUNCH = [
+    sys.executable,
+    "-c",
+    "import os, subprocess, sys\n"
+    "from {{ module_name }} import _stdio\n"
+    "claim = _stdio.claim_stdout\n"
+    "def noisy():\n"
+    "    stream = claim()\n"
+    "    print('Downloading model weights...')\n"
+    "    os.write(1, b'AVB0 not a frame\\n')\n"
+    "    subprocess.run([sys.executable, '-c', 'print(1)'], check=True)\n"
+    "    return stream\n"
+    "_stdio.claim_stdout = noisy\n"
+    "from {{ module_name }} import main; main()",
+]
+
 
 @pytest.fixture
 def water():
@@ -83,7 +103,7 @@ def request_frame(coords, flags=0):
     return buffer.getvalue()
 
 
-def exchange(bootstrap, requests, identifier=IDENTIFIER):
+def exchange(bootstrap, requests, identifier=IDENTIFIER, launch=None):
     """Bootstrap the model, send every request, and decode the replies.
 
     `requests` is a list of (coords, flags) pairs. Returns a list of decoded
@@ -97,7 +117,7 @@ def exchange(bootstrap, requests, identifier=IDENTIFIER):
         stdin += request_frame(coords, flags)
 
     process = subprocess.run(
-        _LAUNCH + [identifier, "--protocol", "binary-v1"],
+        (launch or _LAUNCH) + [identifier, "--protocol", "binary-v1"],
         input=stdin,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -123,6 +143,7 @@ def exchange(bootstrap, requests, identifier=IDENTIFIER):
         + repr(trailing[:200])
     )
 
+    exchange.stderr = process.stderr.decode("utf-8", "replace")
     return responses
 
 
