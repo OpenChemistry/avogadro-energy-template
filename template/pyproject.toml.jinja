@@ -6,7 +6,7 @@ authors = [{name = "{{ author_name }}", email = "{{ author_email }}"}]
 license = "{{ license }}"
 readme = "README.md"
 requires-python = ">={{ python_requires }}"
-{%- set extra_pypi = pypi_dependencies.split(',') | map('trim') | select | list %}
+{%- set extra_pypi = pypi_dependency_list %}
 {%- set pypi = ["avogadro>=2.0"] + (["ase>=3.23"] if example_backend == "ase" else []) + extra_pypi %}
 # The "avogadro" wheel provides avogadro.energy, the binary protocol helper
 # this plugin builds on, so there is no copy of the protocol code to maintain
@@ -43,8 +43,14 @@ channels = ["conda-forge"]
 platforms = [{% for p in platforms %}"{{ p }}"{{ ", " if not loop.last }}{% endfor %}]
 
 [tool.pixi.dependencies]
+{%- set conda = conda_dependency_list %}
+{#- A "python" entry in conda_dependencies replaces this default, since TOML
+    does not allow the key twice. -#}
+{%- set has_python = namespace(found=false) %}
+{%- for dep in conda %}{% if dep.split(' ', 1)[0] == 'python' %}{% set has_python.found = true %}{% endif %}{% endfor %}
+{%- if not has_python.found %}
 python = ">={{ python_requires }}"
-{%- set conda = conda_dependencies.split(',') | map('trim') | select | list %}
+{%- endif %}
 {%- for dep in conda %}
 {%- set parts = dep.split(' ', 1) %}
 {{ parts[0] }} = "{{ (parts[1] if parts | length > 1 else '*') | trim }}"
