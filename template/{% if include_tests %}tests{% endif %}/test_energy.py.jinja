@@ -14,7 +14,7 @@ from avogadro.energy import (
 {%- endif %}
 )
 
-from conftest import coordinates, exchange{% if support_unit_cell %}, image_mask{% endif %}
+from conftest import NOISY_LAUNCH, coordinates, exchange{% if support_unit_cell %}, image_mask{% endif %}
 
 
 def test_energy_request_returns_a_finite_number(water):
@@ -23,6 +23,17 @@ def test_energy_request_returns_a_finite_number(water):
 
     assert isinstance(energy, float)
     assert np.isfinite(energy)
+
+
+def test_stray_stdout_output_does_not_corrupt_the_protocol(water):
+    # exchange() decodes frames strictly, so this fails if any of the noise
+    # reaches the protocol stream, before, between or after the frames.
+    coords = coordinates(water)
+    (energy,) = exchange(water, [(coords, 0)], launch=NOISY_LAUNCH)
+
+    assert np.isfinite(energy)
+    # The noise was diverted to stderr rather than dropped.
+    assert "Downloading model weights" in exchange.stderr
 
 
 def test_gradient_has_one_vector_per_atom(water):

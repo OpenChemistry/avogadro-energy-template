@@ -48,6 +48,8 @@ avogadro-myff/
 │   ├── charges.py          optional electrostatic model - remove it if you don't assign charges
 │   └── customization/
 │       └── myff_options.json   optional user-options dialog (e.g., solvent)
+├── scripts/
+│   └── check_in_avogadro.py   checks the models in a real Avogadro, over RPC
 └── tests/
     ├── conftest.py         a client for the binary protocol
     ├── data/water.json     a real Avogadro bootstrap JSON
@@ -58,6 +60,15 @@ The tests drive the real energy protocol against the real entry point, so they
 catch what actually breaks energy plugins: a gradient returned with the sign of
 a force, an energy left in eV or Hartree, and anything writing to stdout, which
 is the protocol.
+
+`scripts/check_in_avogadro.py` is the other half: it launches a real Avogadro
+(`--app`) once per model in the plugin's `pyproject.toml` and checks, over
+JSON-RPC, that the model is offered, that the first (cold) and second energy
+are finite, that an optimization lowers the energy, and that the `support.unit-cell`
+and `support.ions` promises hold for a crystal and an anion. It needs Python
+3.11+ and nothing else, and the plugin installed in that Avogadro. A released
+Avogadro may not wait long enough for a model that is slow to start; the
+script says so when the first call fails.
 
 The generated plugin runs as soon as it is created, either on a built-in
 Lennard-Jones potential with no dependencies, or on an

@@ -14,12 +14,6 @@ force. Getting either of those wrong shows up as an optimizer that runs uphill.
 import json
 import sys
 {% if example_backend == "ase" %}
-# Third-party imports go to stderr while they run: a stray print or warning on
-# stdout corrupts the binary stream, and the failure looks like a protocol bug
-# rather than a chatty dependency.
-_real_stdout = sys.stdout
-sys.stdout = sys.stderr
-
 import numpy as np
 from ase import Atoms
 {%- if support_unit_cell %}
@@ -27,8 +21,6 @@ from ase.cell import Cell
 {%- endif %}
 from ase.calculators.emt import EMT
 
-sys.stdout = _real_stdout
-del _real_stdout
 {% else %}
 import numpy as np
 {% endif %}
@@ -272,7 +264,8 @@ def _respond(model, request):
         request.send_energy(_energy(model, request.coords))
 
 
-def run():
+def run(protocol_out):
+    """Serve requests, writing response frames to `protocol_out`."""
     # Avogadro sends one compact JSON line, then switches the same pipe to
     # binary frames. Read it from sys.stdin.buffer rather than sys.stdin: the
     # text wrapper reads ahead, and would swallow the first binary frame.
@@ -291,9 +284,10 @@ def run():
     model = _prepare(mol_cjson, options)
 
     # The loop ends when Avogadro closes stdin, which is how the model gets
-    # unloaded. Everything written to stdout from here on must be a frame.
+    # unloaded. Only frames are written to
+    # protocol_out; stdout itself now points at stderr.
     with EnergyServer(
-        sys.stdin.buffer, sys.stdout.buffer, model["num_atoms"]
+        sys.stdin.buffer, protocol_out, model["num_atoms"]
     ) as server:
         for request in server.requests():
             try:

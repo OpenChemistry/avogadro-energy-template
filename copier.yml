@@ -106,16 +106,51 @@ conda_dependencies:
   type: str
   help: |
     Extra conda dependencies, comma separated, with optional version specs
-    (e.g. "pytorch >=2.0, xtb-python"). Leave blank for none.
+    (e.g. "pytorch >=2.0, xtb-python" or, with a range, "python >=3.11,<3.14").
+    Leave blank for none.
   default: ""
 
 pypi_dependencies:
   type: str
   help: |
     Extra PyPI dependencies, comma separated, with optional version specs
-    (e.g. "mace-torch>=0.3.15"). The "avogadro" wheel, which provides the
-    binary protocol helper, is always added for you. Leave blank for none.
+    (e.g. "mace-torch>=0.3.15" or, with a range, "mace-torch>=0.3.17,<0.4").
+    The "avogadro" wheel, which provides the binary protocol helper, is
+    always added for you. Leave blank for none.
   default: ""
+
+# The two lists above, split into individual specs. A comma inside a version
+# range ("mace-torch>=0.3.17,<0.4") is not a separator, so a fragment that
+# starts with a version operator is joined back onto the dependency before it.
+# These are computed, never asked for or saved, and every template that needs
+# the individual dependencies reads them instead of splitting again.
+pypi_dependency_list:
+  type: json
+  when: false
+  default: >-
+    {%- set ns = namespace(items=[]) -%}
+    {%- for frag in pypi_dependencies.split(',') | map('trim') | select -%}
+    {%- if ns.items and frag[0] in '<>=!~' -%}
+    {%- set ns.items = ns.items[:-1] + [ns.items[-1] ~ ',' ~ frag] -%}
+    {%- else -%}
+    {%- set ns.items = ns.items + [frag] -%}
+    {%- endif -%}
+    {%- endfor -%}
+    {{ ns.items | tojson }}
+
+conda_dependency_list:
+  type: json
+  when: false
+  default: >-
+    {%- set ns = namespace(items=[]) -%}
+    {%- for frag in conda_dependencies.split(',') | map('trim') | select -%}
+    {%- if ns.items and frag[0] in '<>=!~' -%}
+    {%- set ns.items = ns.items[:-1] + [ns.items[-1] ~ ',' ~ frag] -%}
+    {%- else -%}
+    {%- set ns.items = ns.items + [frag] -%}
+    {%- endif -%}
+    {%- endfor -%}
+    {{ ns.items | tojson }}
 
 # --- The energy model ------------------------------------------------------
 
@@ -254,12 +289,12 @@ track_dependencies:
     ">=" floor above. Leave blank to turn this off.
   default: >-
     {%- set ns = namespace(names=['avogadro']) -%}
-    {%- for dep in pypi_dependencies.split(',') | map('trim') | select -%}
+    {%- for dep in pypi_dependency_list -%}
     {%- if '>=' in dep -%}
     {%- set ns.names = ns.names + [dep.split('>=')[0].split('[')[0] | trim] -%}
     {%- endif -%}
     {%- endfor -%}
-    {%- for dep in conda_dependencies.split(',') | map('trim') | select -%}
+    {%- for dep in conda_dependency_list -%}
     {%- if '>=' in dep and dep.split(' ', 1)[0] != 'python' -%}
     {%- set ns.names = ns.names + [dep.split(' ', 1)[0]] -%}
     {%- endif -%}
@@ -269,12 +304,12 @@ track_dependencies:
     {%- set ns = namespace(missing=[]) -%}
     {%- for name in track_dependencies.split(',') | map('trim') | select -%}
     {%- set found = namespace(ok=false) -%}
-    {%- for dep in (["avogadro>=2.0"] + (["ase>=3.23"] if example_backend == "ase" else []) + (pypi_dependencies.split(',') | map('trim') | select | list)) -%}
+    {%- for dep in (["avogadro>=2.0"] + (["ase>=3.23"] if example_backend == "ase" else []) + (pypi_dependency_list)) -%}
     {%- if '>=' in dep and dep.split('>=')[0].split('[')[0] | trim | lower == name | lower -%}
     {%- set found.ok = true -%}
     {%- endif -%}
     {%- endfor -%}
-    {%- for dep in conda_dependencies.split(',') | map('trim') | select -%}
+    {%- for dep in conda_dependency_list -%}
     {%- if '>=' in dep and dep.split(' ', 1)[0] | lower == name | lower -%}
     {%- set found.ok = true -%}
     {%- endif -%}

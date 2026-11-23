@@ -33,9 +33,11 @@ long as the model stays selected. The loop ends when Avogadro closes stdin.
 That single long-running process is the thing to keep in mind while editing
 `src/{{ module_name }}/{{ model_module }}.py`:
 
-- **Nothing may print to stdout.** stdout is the protocol. A `print()` left in
-  for debugging, or a dependency that greets you on import, breaks the stream.
-  Write to `sys.stderr` instead; `--debug` is there for exactly this.
+- **stdout is the protocol.** The entry point hands the real stdout to
+  `EnergyServer` and points file descriptor 1 at stderr (`_stdio.py`) before
+  importing the model, so a `print()` or a dependency that greets you on
+  import, even from C code, lands on stderr instead of corrupting the stream.
+  Still write your own diagnostics to `sys.stderr`; `--debug` is there for this.
 - **Return the gradient, not the force.** Avogadro wants dE/dx in
   kJ/mol/Angstrom. ASE and most ML potentials give forces, which are its
   negative.
@@ -48,11 +50,27 @@ That single long-running process is the thing to keep in mind while editing
 `pixi run test` drives the real protocol against the real entry point in a
 subprocess. It checks the analytic gradient against finite differences of the
 energy, which is what catches a sign or unit error before Avogadro does, and it
-asserts that stdout carries protocol frames and nothing else, which catches the
-stray print. Note that a `print()` can pass a casual manual test and still be a
+asserts that stdout carries protocol frames and nothing else, including when
+something writes to stdout at startup. Note that a `print()` can pass a casual manual test and still be a
 bug: Python block-buffers text stdout into a pipe, so the output often appears
 harmlessly at exit right up until some flush lands it between two frames.
 {%- endif %}
+
+### Checking it in Avogadro
+
+With the plugin installed in Avogadro (Manage Plugins > Install from
+Directory...), run the model in the real application:
+
+```bash
+python scripts/check_in_avogadro.py --app /path/to/Avogadro2.app
+```
+
+It starts a fresh Avogadro for each model in `pyproject.toml` and checks, over
+JSON-RPC, that the model is offered, that the first (cold start) and second
+energy are finite, that a short optimization lowers the energy, and that the
+`support.unit-cell` and `support.ions` promises hold. Needs Python 3.11 or
+newer. If the first call fails on a released Avogadro, that build may not wait
+long enough for a slow-starting model; development builds wait up to 60 s.
 
 ### Replacing the model
 

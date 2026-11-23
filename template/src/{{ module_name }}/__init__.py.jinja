@@ -12,6 +12,8 @@ binary coordinate frames for as long as the model stays loaded.
 """
 
 import argparse
+
+from . import _stdio
 {% if include_setup %}
 
 def setup():
@@ -59,8 +61,12 @@ def main():
     # only loaded by the feature that actually needs it.
     match args.feature:
         case "{{ model_identifier }}":
+            # Claim the protocol stream before importing the model, whose
+            # dependencies may print as they load.
+            protocol_out = _stdio.claim_stdout()
             from .{{ model_module }} import run
-            run()
+
+            run(protocol_out)
 {%- if include_charges %}
         case "{{ charges_identifier }}":
             from .charges import run
